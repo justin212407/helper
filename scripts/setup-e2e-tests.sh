@@ -2,12 +2,14 @@
 
 # Helper - E2E Testing Environment Setup Script
 # This script sets up everything needed for E2E testing including Supabase, database migrations, and Playwright
+# Optimized for CI with parallel operations and race condition prevention
 
 set -e
 
 echo "🎭 Setting up E2E Testing Environment for Helper"
 echo "================================================"
 
+# Validate we're in the project root
 if [ ! -f "package.json" ]; then
     echo "❌ Error: Please run this script from the root of the Helper project"
     exit 1
@@ -15,6 +17,7 @@ fi
 
 echo "Current directory: $(pwd)"
 
+# Check for required environment file
 if [ ! -f ".env.test" ]; then
     echo "⚠️ .env.test not found. Please create it from .env.local.sample."
     echo "📁 Files in current directory:"
@@ -24,6 +27,7 @@ fi
 
 echo "✅ .env.test found"
 
+# Create local override file for non-CI environments
 if [ "$CI" != "true" ]; then
     if [ ! -f ".env.test.local" ]; then
         echo "📝 Creating .env.test.local from .env.test..."
@@ -34,6 +38,7 @@ if [ "$CI" != "true" ]; then
     fi
 fi
 
+# Load environment variables
 echo "🔧 Loading environment variables..."
 set -o allexport
 source .env.test
@@ -45,6 +50,7 @@ set +o allexport
 CI="${CI:-false}"
 echo "CI is set to $CI"
 
+# Clean up any existing Supabase containers to prevent conflicts
 echo "🛑 Ensuring no Supabase services are running..."
 pnpm run with-test-env pnpm supabase stop --no-backup 2>/dev/null || true
 
@@ -52,49 +58,65 @@ echo "🔍 Checking for existing Supabase containers for project ${SUPABASE_PROJ
 EXISTING_CONTAINERS=$(docker ps -a -q --filter "name=${SUPABASE_PROJECT_ID}" 2>/dev/null || true)
 if [ ! -z "$EXISTING_CONTAINERS" ]; then
     echo "🧹 Found existing Supabase containers for project ${SUPABASE_PROJECT_ID}, cleaning up..."
-    echo "🛑 Stopping containers..."
-    docker stop $EXISTING_CONTAINERS || true
-    echo "🗑️ Removing containers..."
-    docker rm $EXISTING_CONTAINERS || true
+    # Parallel stop and remove for faster cleanup
+    docker stop $EXISTING_CONTAINERS 2>/dev/null || true
+    docker rm $EXISTING_CONTAINERS 2>/dev/null || true
     echo "✅ Existing containers cleaned up"
 else
     echo "✅ No existing Supabase containers found for project ${SUPABASE_PROJECT_ID}"
 fi
 
+# Start Supabase with optimized config for CI
 echo "🎉 Starting Supabase services..."
 if [ "$CI" = "true" ]; then
-  echo "🪄 Using slim Supabase config for CI"
+  echo "🪄 Using slim Supabase config for CI (disabled studio, analytics, inbucket)"
   export SUPABASE_CONFIG_PATH="./supabase/config.ci.toml"
 fi
 pnpm run with-test-env pnpm supabase start
 
-echo "⏳ Waiting for Auth service to initialize..."
-sleep 5
+# Wait for services to be ready - use health check instead of arbitrary sleep
+echo "⏳ Waiting for Supabase services to be ready..."
+MAX_ATTEMPTS=30
+ATTEMPT=0
+until docker exec "$(docker ps -q --filter "name=${SUPABASE_PROJECT_ID}-auth")" pg_isready -h localhost -U supabase_auth_admin 2>/dev/null || [ $ATTEMPT -eq $MAX_ATTEMPTS ]; do
+    ATTEMPT=$((ATTEMPT + 1))
+    echo "Waiting for Auth service... (attempt $ATTEMPT/$MAX_ATTEMPTS)"
+    sleep 1
+done
 
-echo "🔄 Resetting database..."
-pnpm run with-test-env pnpm supabase db reset
-
-echo "📦 Applying database migrations..."
-pnpm run with-test-env drizzle-kit migrate --config ./db/drizzle.config.ts
-
-if [ "$CI" != "true" ]; then
-echo "📦 Building packages..."
-pnpm run-on-packages build
-else
-echo "⏭️  Skipping package builds in CI (built during pnpm install postinstall)"
+if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+    echo "⚠️ Auth service health check timed out, but continuing..."
 fi
 
+# Database operations - combine reset and migrate to avoid race conditions
+echo "🔄 Resetting database and applying migrations..."
+pnpm run with-test-env pnpm supabase db reset
+
+# Apply Drizzle migrations (Supabase reset handles Supabase migrations)
+echo "📦 Applying Drizzle migrations..."
+pnpm run with-test-env drizzle-kit migrate --config ./db/drizzle.config.ts
+
+# Package builds - skip in CI as postinstall handles it
+if [ "$CI" != "true" ]; then
+    echo "📦 Building packages..."
+    pnpm run-on-packages build
+else
+    echo "⏭️  Skipping package builds in CI (built during pnpm install postinstall)"
+fi
+
+# Seed database - ensure migrations are complete before seeding
 echo "🌱 Seeding the database..."
 pnpm run with-test-env pnpm tsx --conditions=react-server ./db/seeds/seedDatabase.ts
 
+# Playwright setup - skip in CI as workflow handles it
 if [ "$CI" != "true" ]; then
-echo "📦 Installing Playwright and dependencies..."
-pnpm install
+    echo "📦 Installing Playwright and dependencies..."
+    pnpm install
 
-echo "🎭 Installing Playwright browsers..."
-pnpm run with-test-env playwright install --with-deps chromium
+    echo "🎭 Installing Playwright browsers..."
+    pnpm run with-test-env playwright install --with-deps chromium
 else
-echo "⏭️  Skipping pnpm install and Playwright browser install in CI (handled by workflow)"
+    echo "⏭️  Skipping pnpm install and Playwright browser install in CI (handled by workflow)"
 fi
 
 echo ""

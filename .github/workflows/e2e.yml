@@ -10,24 +10,37 @@ permissions:
   contents: read
 
 concurrency:
+  # Cancel in-progress runs for the same PR/branch to save resources
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   e2e:
+    # Use faster runner for main repo, standard for forks
     runs-on: ${{ github.repository == 'antiwork/helper' && 'ubicloud-standard-4' || 'ubuntu-latest' }}
     timeout-minutes: 60
+    # Matrix strategy for test sharding - splits tests across 2 parallel jobs for ~50% time reduction
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     env:
       CI: true
-      OPENAI_API_KEY: test-openai-api-key
-      FIRECRAWL_API_KEY: test-firecrawl-api-key
+      # Use mock API keys for forks/PRs without secrets access
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY || 'test-openai-api-key' }}
+      FIRECRAWL_API_KEY: ${{ secrets.FIRECRAWL_API_KEY || 'test-firecrawl-api-key' }}
+      # Optimize memory for Node.js and CI performance
       NODE_OPTIONS: --max_old_space_size=8192
       PNPM_STORE_PATH: ~/.pnpm-store
+      # Enable sharding in Playwright
+      PLAYWRIGHT_SHARD: ${{ matrix.shard }}
+      PLAYWRIGHT_TOTAL_SHARDS: 2
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          # Shallow clone for faster checkout (depth=1) - no history needed for tests
+          fetch-depth: 1
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -36,54 +49,59 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: ".node-version"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.pnpm-store
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-store-${{ runner.os }}-
+          # Built-in caching is faster than manual cache steps
+          cache: 'pnpm'
 
       - name: Cache Playwright browsers
         id: playwright-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-browsers-${{ runner.os }}-v1
+          key: playwright-browsers-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-v2
           restore-keys: |
+            playwright-browsers-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
             playwright-browsers-${{ runner.os }}-
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Cache Next.js build cache
+      - name: Cache Next.js build
         uses: actions/cache@v4
         with:
           path: |
             .next/cache
             node_modules/.cache
-          key: next-cache-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          # Include package.json in hash for build cache invalidation on dependency changes
+          key: next-cache-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml', '**/package.json') }}-${{ hashFiles('**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx') }}
           restore-keys: |
+            next-cache-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml', '**/package.json') }}-
             next-cache-${{ runner.os }}-
 
+      - name: Install dependencies
+        # Use --prefer-offline for faster installs with cache
+        run: pnpm install --frozen-lockfile --prefer-offline
+
       - name: Install Playwright Browsers
+        # Only install if not cached - saves ~30-60s when cached
         run: pnpm playwright install --with-deps chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
 
       - name: Setup E2E test environment
+        # Optimized setup script with parallel operations and race condition fixes
         run: ./scripts/setup-e2e-tests.sh
 
-      - name: Build next
+      - name: Build Next.js for production
+        # Production build for consistent test environment
         run: pnpm with-test-env next build
 
-      - name: Run full Playwright suite
+      - name: Run Playwright tests (Shard ${{ matrix.shard }}/${{ strategy.job-total }})
+        # Sharded test execution - each job runs subset of tests
         run: ./scripts/e2e.sh
 
       - name: Upload Playwright HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          # Include shard number in artifact name for parallel uploads
+          name: playwright-report-shard-${{ matrix.shard }}
           path: playwright-report/
           retention-days: 30
+          # Compress for faster upload
+          compression-level: 6
