@@ -16,18 +16,21 @@ concurrency:
 jobs:
   e2e:
     runs-on: ${{ github.repository == 'antiwork/helper' && 'ubicloud-standard-4' || 'ubuntu-latest' }}
-    timeout-minutes: 60
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     env:
       CI: true
       OPENAI_API_KEY: test-openai-api-key
       FIRECRAWL_API_KEY: test-firecrawl-api-key
       NODE_OPTIONS: --max_old_space_size=8192
-      PNPM_STORE_PATH: ~/.pnpm-store
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -36,6 +39,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: ".node-version"
+          cache: "pnpm"
 
       - name: Cache pnpm store
         uses: actions/cache@v4
@@ -50,40 +54,101 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-browsers-${{ runner.os }}-v1
+          key: playwright-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}-v2
           restore-keys: |
-            playwright-browsers-${{ runner.os }}-
+            playwright-${{ runner.os }}-
 
+      # OPTIMIZATION: Install without post-install scripts
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
+      # OPTIMIZATION: Cache built packages separately
+      - name: Cache built packages
+        id: packages-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            packages/*/dist
+            packages/*/build
+          key: packages-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml', 'packages/**/*.ts', 'packages/**/*.tsx', 'packages/**/package.json') }}
+          restore-keys: |
+            packages-${{ runner.os }}-
+
+      # OPTIMIZATION: Only build packages if cache miss
+      - name: Build packages
+        if: steps.packages-cache.outputs.cache-hit != 'true'
+        run: pnpm run --filter=!helperai --if-present --workspace-concurrency=4 build
+
+      # OPTIMIZATION: Install Playwright only if not cached
+      - name: Install Playwright Browsers
+        run: pnpm playwright install --with-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+
+      # OPTIMIZATION: Better Next.js cache key
       - name: Cache Next.js build cache
         uses: actions/cache@v4
         with:
           path: |
             .next/cache
             node_modules/.cache
-          key: next-cache-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: next-cache-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml', 'app/**/*.[jt]s?(x)', 'lib/**/*.[jt]s?(x)', 'components/**/*.[jt]s?(x)') }}
           restore-keys: |
+            next-cache-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}-
             next-cache-${{ runner.os }}-
 
-      - name: Install Playwright Browsers
-        run: pnpm playwright install --with-deps chromium
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      # OPTIMIZATION: Run setup and build in parallel
+      - name: Setup E2E environment & Build Next.js (parallel)
+        run: |
+          # Start setup in background
+          ./scripts/setup-e2e-tests.sh &
+          SETUP_PID=$!
 
-      - name: Setup E2E test environment
-        run: ./scripts/setup-e2e-tests.sh
+          # Build Next.js while setup runs
+          pnpm with-test-env next build
 
-      - name: Build next
-        run: pnpm with-test-env next build
+          # Wait for setup to complete
+          wait $SETUP_PID
+          if [ $? -ne 0 ]; then
+            echo "Setup failed"
+            exit 1
+          fi
 
-      - name: Run full Playwright suite
-        run: ./scripts/e2e.sh
+      # OPTIMIZATION: Run tests with sharding
+      - name: Run Playwright tests (Shard ${{ matrix.shard }}/4)
+        run: pnpm playwright test --shard=${{ matrix.shard }}/4
 
       - name: Upload Playwright HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
+          path: playwright-report/
+          retention-days: 30
+
+  # Merge all test reports
+  merge-reports:
+    if: always()
+    needs: [e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          path: all-reports
+          pattern: playwright-report-*
+          merge-multiple: false
+
+      - name: Merge HTML reports
+        run: |
+          npm install -g playwright
+          npx playwright merge-reports --reporter html ./all-reports
+        continue-on-error: true
+
+      - name: Upload merged report
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-merged
           path: playwright-report/
           retention-days: 30
