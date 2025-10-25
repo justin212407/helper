@@ -8,6 +8,7 @@
   "scripts": {
     "build": "pnpm run-on-packages build && next build",
     "build:preview": "pnpm run build && pnpm run db:prod:migrate && pnpm tsx --conditions=react-server ./db/seeds/index.ts",
+    "build:test": "next build --no-lint --no-telemetry",
     "clean": "git clean -xdf .cache .next node_modules",
     "deploy": "pnpm run build && pnpm run db:prod:migrate",
     "postinstall": "pnpm run-on-packages build",

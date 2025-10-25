@@ -21,6 +21,11 @@ fi
 
 echo "🔍 Checking Supabase test environment setup..."
 
+if docker ps | grep -q "$SUPABASE_PROJECT_ID"; then
+  echo "✅ Supabase environment already running, skipping setup."
+  exit 0
+fi
+
 # Check if Supabase containers are running
 if [ -z "$SUPABASE_PROJECT_ID" ]; then
     echo "❌ SUPABASE_PROJECT_ID not found in environment variables."
@@ -74,6 +79,12 @@ fi
 
 # Run the e2e tests
 echo "🧪 Running Playwright e2e tests..."
+# Detect if a shard argument was passed earlier
+if [[ "$PLAYWRIGHT_COMMAND" == *"--shard"* ]]; then
+  echo "🧩 Running Playwright tests with sharding enabled: $PLAYWRIGHT_COMMAND"
+else
+  echo "🧩 Running all Playwright tests (no sharding)"
+fi  
 pnpm run with-test-env $PLAYWRIGHT_COMMAND
 
 echo "✅ All tests completed successfully!"
