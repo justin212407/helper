@@ -1,18 +1,23 @@
 import { withSentryConfig } from "@sentry/nextjs";
 import type { NextConfig } from "next";
-import { env } from "@/lib/env";
-
-// Ensures that `env` is not an unused variable. Importing `env` during build-time
-// ensures that the project never gets deployed unless all environment variables
-// have been properly configured.
-if (!env.NEXT_RUNTIME) {
-  throw new Error("NEXT_RUNTIME is not set");
-}
 
 const isCI = process.env.CI === "true";
+const isTestEnv = process.env.IS_TEST_ENV === "1";
+
+// In test/CI environments, delay env validation until runtime to allow test env vars to load
+let env: any;
+if (!isTestEnv) {
+  env = require("@/lib/env").env;
+  // Ensures that `env` is not an unused variable. Importing `env` during build-time
+  // ensures that the project never gets deployed unless all environment variables
+  // have been properly configured.
+  if (!env.NEXT_RUNTIME) {
+    throw new Error("NEXT_RUNTIME is not set");
+  }
+}
 
 let nextConfig: NextConfig = {
-  reactStrictMode: !env.DISABLE_STRICT_MODE,
+  reactStrictMode: isTestEnv ? false : !(env?.DISABLE_STRICT_MODE ?? false),
   /** We already do linting as separate tasks in CI */
   eslint: { ignoreDuringBuilds: true },
   /** Ignore type errors in CI for faster builds - types are checked separately */
