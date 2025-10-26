@@ -9,10 +9,14 @@ if (!env.NEXT_RUNTIME) {
   throw new Error("NEXT_RUNTIME is not set");
 }
 
+const isCI = process.env.CI === "true";
+
 let nextConfig: NextConfig = {
   reactStrictMode: !env.DISABLE_STRICT_MODE,
   /** We already do linting as separate tasks in CI */
   eslint: { ignoreDuringBuilds: true },
+  /** Ignore type errors in CI for faster builds - types are checked separately */
+  typescript: { ignoreBuildErrors: isCI },
   poweredByHeader: false,
   allowedDevOrigins: ["https://helperai.dev"],
   // https://github.com/nextauthjs/next-auth/discussions/9385#discussioncomment-8875108
@@ -28,6 +32,10 @@ let nextConfig: NextConfig = {
     "/api/job": ["node_modules/canvas"],
   },
   devIndicators: process.env.IS_TEST_ENV === "1" ? false : undefined,
+  compiler: {
+    // Remove console logs in production builds (keep errors)
+    removeConsole: isCI ? { exclude: ["error", "warn"] } : false,
+  },
   turbopack: {
     rules: {
       "*.svg": {

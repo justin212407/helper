@@ -36,26 +36,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: ".node-version"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ~/.pnpm-store
-          key: pnpm-store-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-store-${{ runner.os }}-
-
-      - name: Cache Playwright browsers
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-browsers-${{ runner.os }}-v1
-          restore-keys: |
-            playwright-browsers-${{ runner.os }}-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+          cache: 'pnpm'
 
       - name: Cache Next.js build cache
         uses: actions/cache@v4
@@ -63,22 +44,35 @@ jobs:
           path: |
             .next/cache
             node_modules/.cache
-          key: next-cache-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: next-cache-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx') }}
           restore-keys: |
+            next-cache-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}-
             next-cache-${{ runner.os }}-
 
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-browsers-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-browsers-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Install Playwright Browsers
-        run: pnpm playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
 
       - name: Setup E2E test environment
         run: ./scripts/setup-e2e-tests.sh
 
-      - name: Build next
-        run: pnpm with-test-env next build
+      - name: Build Next.js for production
+        run: pnpm run build:ci
 
-      - name: Run full Playwright suite
-        run: ./scripts/e2e.sh
+      - name: Run Playwright E2E tests
+        run: pnpm run test:e2e:ci
 
       - name: Upload Playwright HTML report
         if: always()

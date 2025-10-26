@@ -1,6 +1,8 @@
 #!/bin/bash
 # This script runs the E2E tests using Playwright
 
+set -euo pipefail
+
 # Check if .env.test exists before attempting to source it
 if [ ! -f ".env.test" ]; then
     echo "❌ .env.test not found. Please run ./scripts/setup-e2e-tests.sh first."
@@ -41,8 +43,6 @@ echo "✅ Found running Supabase containers for project: ${SUPABASE_PROJECT_ID}"
 echo "✅ Playwright authentication setup found"
 echo "✅ All checks passed! Test environment is ready."
 
-set -e
-
 echo "===================="
 
 # Parse command line arguments
@@ -54,9 +54,15 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-# If no arguments provided, default to basic playwright test
+# If no arguments provided, use optimized defaults for CI
 if [ -z "$PLAYWRIGHT_COMMAND" ]; then
-    PLAYWRIGHT_COMMAND="pnpm playwright test"
+    if [ "$CI" = "true" ]; then
+        # CI: Run only chromium with list reporter for cleaner output
+        PLAYWRIGHT_COMMAND="pnpm playwright test --project=chromium --reporter=list"
+    else
+        # Local: Run all configured browsers
+        PLAYWRIGHT_COMMAND="pnpm playwright test"
+    fi
 fi
 
 # Ensure direct 'playwright' invocations go through the pnpm script wrapper

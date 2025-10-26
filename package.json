@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm run-on-packages build && next build",
+    "build:ci": "NEXT_TELEMETRY_DISABLED=1 pnpm run-on-packages build && next build",
     "build:preview": "pnpm run build && pnpm run db:prod:migrate && pnpm tsx --conditions=react-server ./db/seeds/index.ts",
     "clean": "git clean -xdf .cache .next node_modules",
     "deploy": "pnpm run build && pnpm run db:prod:migrate",
@@ -38,6 +39,7 @@
     "test:watch": "pnpm test:unit --watch",
     "test:e2e:setup": "bash scripts/setup-e2e-tests.sh",
     "test:e2e": "bash scripts/e2e.sh pnpm playwright test",
+    "test:e2e:ci": "bash scripts/e2e.sh",
     "test:e2e:debug": "bash scripts/e2e.sh pnpm playwright test --debug",
     "test:e2e:headed": "bash scripts/e2e.sh pnpm playwright test --headed",
     "playwright": "node --conditions=react-server node_modules/@playwright/test/cli.js",
@@ -238,11 +240,7 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild",
-      "protobufjs",
       "sharp",
-      "ssh2",
-      "unrs-resolver",
       "supabase"
     ],
     "ignoredBuiltDependencies": [
