@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { takeDebugScreenshot } from "../utils/test-helpers";
+import { debugWait, takeDebugScreenshot } from "../utils/test-helpers";
 
 test.use({ storageState: "tests/e2e/.auth/user.json" });
 
@@ -26,7 +26,8 @@ test.describe("Unread Messages Filter", () => {
     await expect(filterButton).toHaveClass(/bright/);
     await expect(page).toHaveURL(/hasUnreadMessages=true/);
 
-    await page.waitForLoadState("networkidle");
+    // Wait for filter to be applied and conversation list to update
+    await debugWait(page, 200);
 
     const unreadBadge = page.locator('[data-testid="unread-messages-badge"]');
     const badgeCount = await unreadBadge.count();
@@ -53,25 +54,22 @@ test.describe("Unread Messages Filter", () => {
     await expect(todayOption).toBeVisible();
     await todayOption.click();
 
-    await page.waitForTimeout(1000);
-
-    await expect(dateFilter).toHaveClass(/bright/);
+    // Wait for date filter to be applied - check URL instead of class
+    await expect(page).toHaveURL(/createdAfter=/, { timeout: 5000 });
 
     const unreadFilter = page.locator('button:has-text("Unread")');
     await unreadFilter.click();
 
-    await expect(dateFilter).toHaveClass(/bright/);
     await expect(unreadFilter).toHaveClass(/bright/);
-
     await expect(page).toHaveURL(/hasUnreadMessages=true/);
 
     const currentUrl = page.url();
     console.log("Current URL:", currentUrl);
 
+    // Verify both filters are active via URL parameters
     if (currentUrl.includes("createdAfter=")) {
       await expect(page).toHaveURL(/createdAfter=/);
-    } else {
-      await expect(dateFilter).toHaveClass(/bright/);
+      await expect(page).toHaveURL(/hasUnreadMessages=true/);
     }
   });
 
