@@ -1,19 +1,25 @@
 import { expect, type Page } from "@playwright/test";
+import { debugWait } from "./test-helpers";
 import { waitForToast } from "./toastHelpers";
 
 // Clicks the create one button in the saved replies page
 export async function clickCreateOneButton(page: Page) {
-  await page.locator('button:has-text("Create one")').click();
+  const createButton = page.locator('button:has-text("Create one")');
+  await expect(createButton).toBeVisible({ timeout: 10000 });
+  await createButton.click();
 }
 
 // Clicks the floating add button in the saved replies page
 export async function clickFloatingAddButton(page: Page) {
-  await page.locator("button.fixed").click();
+  const floatingButton = page.locator("button.fixed");
+  await expect(floatingButton).toBeVisible({ timeout: 10000 });
+  await floatingButton.click();
 }
 
 // Opens the create dialog in the saved replies page
 export async function openCreateDialog(page: Page) {
-  await page.waitForTimeout(500);
+  // Short debug wait for UI to stabilize (no-op in CI)
+  await debugWait(page, 200);
 
   const emptyState = page.locator('text="No saved replies yet"');
   const floatingAddButton = page.locator("button.fixed");
@@ -36,7 +42,9 @@ export async function openCreateDialog(page: Page) {
       }
     }
   }
-  await page.waitForTimeout(200);
+
+  // Wait for dialog to be visible
+  await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
 }
 
 // Fills the saved reply form in the create or edit dialog

@@ -36,7 +36,7 @@ async function sendReplyMessage(page: Page, message: string, { close }: { close?
     ? page.locator('button:has-text("Reply and close")')
     : page.locator('button:has-text("Reply"):not(:has-text("close")):not(:has-text("Close"))');
   await replyButton.click();
-  
+
   // Wait for the message to appear in the thread
   await expect(page.getByTestId("message-thread")).toContainText(message, { timeout: 5000 });
 }
@@ -158,7 +158,9 @@ test.describe("Conversation Actions", () => {
         await expect(closeButton).toBeVisible();
         await expect(closeButton).toBeEnabled();
         await closeButton.click();
-        
+
+        await closeButton.click();
+
         // Wait for status change to be reflected
         await expect(page.locator("text=closed")).toBeVisible({ timeout: 5000 });
 
@@ -201,17 +203,18 @@ test.describe("Conversation Actions", () => {
       }
 
       const composer = page.locator('[aria-label="Conversation editor"] .tiptap.ProseMirror');
+      await expect(composer).toBeVisible({ timeout: 5000 });
       await composer.click({ force: true });
+      await composer.focus();
 
-      try {
-        await composer.evaluate((el) => {
-          el.innerHTML = "";
-          el.textContent = "";
-        });
-      } catch {
-        await page.keyboard.press("Control+a");
-        await page.keyboard.press("Delete");
-      }
+      // Clear any existing content and wait for it to be empty
+      await composer.evaluate((el) => {
+        el.innerHTML = "";
+        el.textContent = "";
+      });
+
+      // Verify the composer is empty before typing
+      await expect(composer).toHaveText("", { timeout: 2000 });
 
       await composer.pressSequentially(testMessage);
 
@@ -223,16 +226,18 @@ test.describe("Conversation Actions", () => {
         await expect(page.getByTestId("message-thread")).toContainText(testMessage, { timeout: 5000 });
         await expect(page.locator("text=closed")).toBeVisible({ timeout: 5000 });
       } catch (error) {
-        try {
-          await composer.evaluate((el) => {
-            el.innerHTML = "";
-            el.textContent = "";
-          });
-        } catch {
-          await page.keyboard.press("Control+a");
-          await page.keyboard.press("Delete");
-        }
+        // If reply and close fails, try regular reply
+        await composer.click({ force: true });
+        await composer.focus();
 
+        // Clear the composer again
+        await composer.evaluate((el) => {
+          el.innerHTML = "";
+          el.textContent = "";
+        });
+
+        // Verify empty before typing
+        await expect(composer).toHaveText("", { timeout: 2000 });
         await composer.pressSequentially(testMessage);
 
         const updatedText = await composer.textContent();
